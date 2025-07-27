@@ -1,0 +1,10 @@
+{
+  "name": "chattrbox",
+  "version": "1.0.0",
+  "main": "index.js",
+  "repository": "git@github.com:lola-emil/chattrbox.git",
+  "author": "Rens Saladaga <staleexam19@gmail.com>",
+  "license": "MIT",
+  "private": true,
+  "devDependencies": {}
+}
