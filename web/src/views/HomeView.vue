@@ -18,6 +18,9 @@ const remoteId = ref<string>("");
 const isMicOn = ref<boolean>(false);
 const isVideoOn = ref<boolean>(false);
 
+const isWaiting = ref<boolean>(false);
+const inCall = ref<boolean>(false);
+
 const socket = ref<Socket | null>(null);
 
 // Peer instance and stream
@@ -29,10 +32,13 @@ let currentCall: MediaConnection | null = null;
 
 
 function makeCall() {
+  socket.value?.emit("wait-for-peer", localId.value);
+}
 
-  socket.value?.emit("find-peer", localId.value);
 
-  console.log("Making call");
+function skip() {
+  endCall();
+  socket.value?.emit("skip", localId.value, remoteId.value);
 }
 
 
@@ -57,9 +63,12 @@ function toggleVideo() {
 
 function endCall() {
   if (currentCall) {
+    console.log("closing");
     currentCall.close();
     currentCall = null;
   }
+  
+  inCall.value = false;
 }
 
 
@@ -74,8 +83,6 @@ function cleanupRemoteVideo() {
 
 onMounted(() => {
   peer = new Peer();
-
-
   // set ang local
   navigator.mediaDevices
     .getUserMedia({ video: true, audio: true })
@@ -95,7 +102,7 @@ onMounted(() => {
     console.log(id);
     localId.value = id;
 
-    socket.value = io("http://localhost:5000", {
+    socket.value = io(import.meta.env.VITE_API_URL, {
       query: {
         peerId: localId.value
       }
@@ -104,8 +111,6 @@ onMounted(() => {
 
 
     socket.value.on("peer-found", remotePeerId => {
-      console.log("Peer found");
-
       if (!peer) {
         alert("Peer has not been initialized..");
         return;
@@ -113,14 +118,20 @@ onMounted(() => {
 
       if (!localId.value) return;
 
-      console.log("Remote:", remotePeerId);
+      remoteId.value = remotePeerId;
+
       let call: MediaConnection;
       if (localStream.value)
         call = peer.call(remotePeerId, localStream.value);
       else
         call = peer.call(remotePeerId, new MediaStream());
 
+      isWaiting.value = false;
+      inCall.value = true;
+
       currentCall = call;
+
+      call.once("close", () => skip());
 
       call.on("stream", (remoteStream: MediaStream) => {
         console.log("Streaming");
@@ -128,36 +139,44 @@ onMounted(() => {
           alert("Remote video has not been initialized");
           return;
         };
-
-        console.log(remoteStream);
         remoteVideo.value.srcObject = remoteStream;
       });
     });
 
-    socket.value?.on("peer-not-found", message => {
-      console.log(message);
+    socket.value.on("waiting", message => {
+      isWaiting.value = true;
     });
   });
 
 
   // Handle incoming call
-  peer.on("call", (connection) => {
+  peer.on("call", (call) => {
     console.log("Naay call");
-    currentCall = connection;
+    currentCall = call;
+
+    call.once("close", () => skip());
+
     if (localStream.value) {
       console.log("answering with local stream");
-      connection.answer(localStream.value);
+      call.answer(localStream.value);
     }
     else
-      connection.answer();
+      call.answer();
 
-    connection.on("stream", (remoteStream) => {
-        console.log("Streaming");
+    isWaiting.value = false;
+    inCall.value = true;
+
+    call.on("stream", (remoteStream) => {
+
+      console.log("Streaming");
+
       if (!remoteVideo.value) {
         alert("Remote video has not been initialized");
         return;
       };
+
       console.log("Streaming caller's video");
+
       remoteVideo.value.srcObject = remoteStream;
     });
   });
@@ -186,7 +205,7 @@ onUnmounted(() => {
           <!-- Remote video -->
           <video ref="remoteVideo" class="flex-1 border" autoplay playsinline></video>
 
-          <video ref="localVideo" class="absolute z-10 bottom-5 right-5 rounded w-96" autoplay muted
+          <video ref="localVideo" class="absolute w-52 z-10 bottom-5 right-5 rounded hidden" autoplay muted
             playsinline></video>
         </div>
 
@@ -203,15 +222,17 @@ onUnmounted(() => {
               <IconVideoOff v-else />
             </button>
 
-            <button class="btn btn-soft" @click="makeCall()">
-              Find Peer
+            <button class="btn btn-soft" @click="inCall ? skip() : makeCall()" :disabled="isWaiting">
+              <span v-if="isWaiting">Waiting</span>
+              <span v-else-if="inCall">Skip</span>
+              <span v-else>Find Peer</span>
             </button>
           </div>
         </div>
       </div>
 
       <!-- Chat section -->
-      <div class="w-96 flex flex-col">
+      <div class="w-96 flex flex-col hidden">
         <div class="flex-1 shadow rounded p-2">
           <div class="chat chat-end">
             <div class="chat-header">
